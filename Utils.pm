@@ -13,7 +13,7 @@ use Readonly;
 Readonly::Array our @EXPORT_OK => qw(conflict hash hash_array);
 
 # Version.
-our $VERSION = 0.02;
+our $VERSION = 0.03;
 
 # Check conflits.
 sub conflict {
@@ -28,30 +28,36 @@ sub conflict {
 # Create record to hash.
 sub hash {
 	my ($self, $key_ar, $val) = @_;
-	my @tmp = @{$key_ar};
-	my $tmp_hr = $self->{'config'};
-	foreach my $i (0 .. $#tmp) {
-		if ($i != $#tmp) {
-			if (! exists $tmp_hr->{$tmp[$i]}) {
-				$tmp_hr->{$tmp[$i]} = {};
-			} elsif (ref $tmp_hr->{$tmp[$i]} ne 'HASH') {
-				conflict($self, $tmp_hr, $tmp[$i]);
-				$tmp_hr->{$tmp[$i]} = {};
+	my $config_hr = $self->{'config'};
+	my $num = 0;
+	foreach my $key (@{$key_ar}) {
+		if ($num != $#{$key_ar}) {
+			if (! exists $config_hr->{$key}) {
+				$config_hr->{$key} = {};
+			} elsif (ref $config_hr->{$key} ne 'HASH') {
+				conflict($self, $config_hr, $key);
+				$config_hr->{$key} = {};
 			}
-			$tmp_hr = $tmp_hr->{$tmp[$i]};
-			push @{$self->{'stack'}}, $tmp[$i];
+			$config_hr = $config_hr->{$key};
+			push @{$self->{'stack'}}, $key;
 		} else {
-			conflict($self, $tmp_hr, $tmp[$i]);
+			conflict($self, $config_hr, $key);
+
+			# Process callback.
 			if (defined $self->{'callback'}) {
-				$tmp_hr->{$tmp[$i]}
-					= $self->{'callback'}->(
-					[@{$self->{'stack'}}, $tmp[$i]],
-					$val);
-			} else {
-				$tmp_hr->{$tmp[$i]} = $val;
+				$val = $self->{'callback'}->(
+					[@{$self->{'stack'}}, $key],
+					$val,
+				);
 			}
+
+			# Add value.
+			$config_hr->{$key} = $val;
+
+			# Clean.
 			$self->{'stack'} = [];
 		}
+		$num++;
 	}
 	return;
 }
@@ -59,36 +65,42 @@ sub hash {
 # Create record to hash.
 sub hash_array {
 	my ($self, $key_ar, $val) = @_;
-	my @tmp = @{$key_ar};
-	my $tmp_hr = $self->{'config'};
-	foreach my $i (0 .. $#tmp) {
-		if ($i != $#tmp) {
-			if (! exists $tmp_hr->{$tmp[$i]}) {
-				$tmp_hr->{$tmp[$i]} = {};
-			} elsif (ref $tmp_hr->{$tmp[$i]} ne 'HASH') {
-				conflict($self, $tmp_hr, $tmp[$i]);
-				$tmp_hr->{$tmp[$i]} = {};
+	my $config_hr = $self->{'config'};
+	my $num = 0;
+	foreach my $key (@{$key_ar}) {
+		if ($num != $#{$key_ar}) {
+			if (! exists $config_hr->{$key}) {
+				$config_hr->{$key} = {};
+			} elsif (ref $config_hr->{$key} ne 'HASH') {
+				conflict($self, $config_hr, $key);
+				$config_hr->{$key} = {};
 			}
-			$tmp_hr = $tmp_hr->{$tmp[$i]};
-			push @{$self->{'stack'}}, $tmp[$i];
+			$config_hr = $config_hr->{$key};
+			push @{$self->{'stack'}}, $key;
 		} else {
+
+			# Process callback.
 			if (defined $self->{'callback'}) {
-				$tmp_hr->{$tmp[$i]}
-					= $self->{'callback'}->(
-					[@{$self->{'stack'}}, $tmp[$i]],
-					$val);
-			} else {
-				if (ref $tmp_hr->{$tmp[$i]} eq 'ARRAY') {
-					push @{$tmp_hr->{$tmp[$i]}}, $val;
-				} elsif ($tmp_hr->{$tmp[$i]}) {
-					my $foo = $tmp_hr->{$tmp[$i]};
-					$tmp_hr->{$tmp[$i]} = [$foo, $val];
-				} else {
-					$tmp_hr->{$tmp[$i]} = $val;
-				}
+				$val = $self->{'callback'}->(
+					[@{$self->{'stack'}}, $key],
+					$val,
+				);
 			}
+
+			# Add value.
+			if (ref $config_hr->{$key} eq 'ARRAY') {
+				push @{$config_hr->{$key}}, $val;
+			} elsif ($config_hr->{$key}) {
+				my $foo = $config_hr->{$key};
+				$config_hr->{$key} = [$foo, $val];
+			} else {
+				$config_hr->{$key} = $val;
+			}
+
+			# Clean.
 			$self->{'stack'} = [];
 		}
+		$num++;
 	}
 	return;
 }
@@ -119,17 +131,28 @@ Config::Utils - Common config utilities.
 =item B<conflict($self, $config_hr, $key)>
 
  Check conflits.
+ Affected variables from $self:
+ - set_conflicts - Flag, then control conflicts.
+ - stack - Reference to array with actual '$key' key position.
  Returns undef or fatal error.
 
 =item B<hash($self, $key_ar, $val)>
 
  Create record to hash.
+ Affected variables from $self:
+ - config - Actual configuration in hash reference.
+ - set_conflicts - Flag, then control conflicts.
+ - stack - Reference to array with actual '$key' key position.
  Returns undef or fatal error.
 
 =item B<hash_array($self, $key_ar, $val)>
 
  Create record to hash.
  If exists more value record for one key, then create array of values.
+ Affected variables from $self:
+ - config - Actual configuration in hash reference.
+ - set_conflicts - Flag, then control conflicts.
+ - stack - Reference to array with actual '$key' key position.
  Returns undef or fatal error.
 
 =back
@@ -237,6 +260,48 @@ Config::Utils - Common config utilities.
  #    'stack' => ARRAY(0x8edf6e0)
  #         empty array
 
+=head1 EXAMPLE4
+
+ # Pragmas.
+ use strict;
+ use warnings;
+
+ # Modules.
+ use Config::Utils qw(hash_array);
+ use Dumpvalue;
+
+ # Object.
+ my $self = {
+         'callback' => sub {
+                 my ($key_ar, $value) = @_;
+                 return uc($value);
+         },
+         'config' => {},
+         'set_conflicts' => 1,
+         'stack' => [],
+ };
+
+ # Add records.
+ hash_array($self, ['foo', 'baz'], 'bar');
+ hash_array($self, ['foo', 'baz'], 'bar');
+
+ # Dump.
+ my $dump = Dumpvalue->new;
+ $dump->dumpValues($self);
+
+ # Output:
+ # 0  HASH(0x8edf890)
+ #    'callback' => CODE(0x8405c40)
+ #       -> &CODE(0x8405c40) in ???
+ #    'config' => HASH(0x8edf850)
+ #       'foo' => HASH(0x8edf840)
+ #          'baz' => ARRAY(0x8edf6d0)
+ #             0  'BAR'
+ #             1  'BAR'
+ #    'set_conflicts' => 1
+ #    'stack' => ARRAY(0x8edf6e0)
+ #         empty array
+
 =head1 DEPENDENCIES
 
 L<Error::Pure>,
@@ -259,6 +324,6 @@ BSD license.
 
 =head1 VERSION
 
-0.02
+0.03
 
 =cut
